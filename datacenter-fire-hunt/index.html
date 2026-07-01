@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Data Center Fire Hunt</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #121a33;
+    --accent: #4f8cff;
+    --hot: #ff5a3c;
+    --cool: #37d67a;
+    --ink: #e8eefc;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: radial-gradient(circle at 50% -10%, #16204a, var(--bg));
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    background: #0a1a2f;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.05);
+    cursor: none;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  .card {
+    pointer-events: auto;
+    background: rgba(12,18,40,.92);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 28px 34px;
+    max-width: 460px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  .card h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: .5px; }
+  .card h1 .fire { color: var(--hot); }
+  .card p { margin: 10px 0; line-height: 1.5; opacity: .9; font-size: 15px; }
+  .card .keys { font-size: 13px; opacity: .7; margin-top: 14px; }
+  button {
+    margin-top: 18px;
+    background: linear-gradient(180deg, #5b96ff, #3f74e6);
+    color: #fff; border: 0; border-radius: 10px;
+    padding: 13px 30px; font-size: 17px; font-weight: 700;
+    cursor: pointer; transition: transform .06s ease, filter .15s ease;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: translateY(1px) scale(.99); }
+  .hidden { display: none !important; }
+  .stat { color: var(--accent); font-weight: 700; }
+
+  .lb { margin: 16px 0 4px; text-align: left; }
+  .lb h2 {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 1px;
+    opacity: .6; margin: 0 0 8px; text-align: center;
+  }
+  .lb ol { margin: 0; padding: 0; list-style: none; counter-reset: rank; }
+  .lb li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 8px; font-size: 14px;
+    background: rgba(255,255,255,.03);
+    margin-bottom: 4px; counter-increment: rank;
+  }
+  .lb li::before {
+    content: counter(rank);
+    width: 22px; text-align: center; font-weight: 800;
+    color: var(--accent); flex: 0 0 auto;
+  }
+  .lb li:nth-child(1)::before { content: "🥇"; }
+  .lb li:nth-child(2)::before { content: "🥈"; }
+  .lb li:nth-child(3)::before { content: "🥉"; }
+  .lb li.me { background: rgba(79,140,255,.18); box-shadow: inset 0 0 0 1px rgba(79,140,255,.4); }
+  .lb .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb .sc { font-weight: 800; color: var(--ink); }
+  .lb .empty { text-align: center; opacity: .5; font-size: 13px; padding: 8px; }
+  .nameRow { display: flex; gap: 8px; margin-top: 6px; }
+  .nameRow input {
+    flex: 1; background: #0a1424; border: 1px solid rgba(255,255,255,.12);
+    color: var(--ink); border-radius: 10px; padding: 11px 14px; font-size: 15px;
+  }
+  .nameRow input:focus { outline: none; border-color: var(--accent); }
+  .nameRow button { margin-top: 0; padding: 11px 20px; font-size: 15px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="620"></canvas>
+  <div id="overlay">
+    <div id="startCard" class="card">
+      <h1>🔥 Data Center <span class="fire">Fire Hunt</span></h1>
+      <p>Серверные стойки перегреваются! Из железа вырываются язычки пламени.
+         Наведи прицел и <b>туши огонь</b>, пока датацентр не расплавился.</p>
+      <p>Каждый упущенный огонёк поднимает <b>температуру</b>.
+         Достигнет 100°C — <b>тепловая авария</b> и конец игры.</p>
+      <p style="font-size:13px;opacity:.8">Сложность растёт со временем: огня всё больше, он всё быстрее.</p>
+      <button id="startBtn">Заступить на смену</button>
+      <div class="keys">Мышь — прицел · Клик — залп огнетушителя · R — перезарядка</div>
+      <div class="lb" id="startLb"></div>
+    </div>
+    <div id="overCard" class="card hidden">
+      <h1>💥 Тепловая авария</h1>
+      <p id="overText"></p>
+      <div class="nameRow" id="nameRow">
+        <input id="nameInput" maxlength="14" placeholder="Твоё имя для лидерборда" />
+        <button id="saveBtn">В зал славы</button>
+      </div>
+      <div class="lb" id="overLb"></div>
+      <button id="restartBtn">Новая смена</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const FLOOR = H - 70;
+
+  const startCard = document.getElementById('startCard');
+  const overCard = document.getElementById('overCard');
+  const overText = document.getElementById('overText');
+  const nameRow = document.getElementById('nameRow');
+  const nameInput = document.getElementById('nameInput');
+  document.getElementById('startBtn').onclick = startGame;
+  document.getElementById('restartBtn').onclick = startGame;
+  document.getElementById('saveBtn').onclick = saveScore;
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveScore(); });
+
+  // ---- Leaderboard (localStorage) ----
+  const LB_KEY = 'dcfh_leaderboard_v1';
+  function loadLB() {
+    try { return JSON.parse(localStorage.getItem(LB_KEY)) || []; }
+    catch { return []; }
+  }
+  function renderLB(el, highlightId) {
+    const list = loadLB().sort((a, b) => b.score - a.score);
+    if (!list.length) {
+      el.innerHTML = '<h2>Зал славы</h2><div class="empty">Пока никто не спас датацентр — будь первым!</div>';
+      return;
+    }
+    const rows = list.slice(0, 10).map(r =>
+      `<li class="${r.id === highlightId ? 'me' : ''}">` +
+        `<span class="nm">${escapeHtml(r.name)}</span>` +
+        `<span class="sc">${r.score}</span>` +
+      `</li>`).join('');
+    el.innerHTML = `<h2>Зал славы</h2><ol>${rows}</ol>`;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  let pendingScore = null; // {id, score, wave, time}
+  function saveScore() {
+    if (!pendingScore) return;
+    const name = (nameInput.value || 'Аноним').trim().slice(0, 14) || 'Аноним';
+    const list = loadLB();
+    list.push({ ...pendingScore, name });
+    list.sort((a, b) => b.score - a.score);
+    const trimmed = list.slice(0, 25);
+    try { localStorage.setItem(LB_KEY, JSON.stringify(trimmed)); } catch {}
+    nameRow.classList.add('hidden');
+    renderLB(document.getElementById('overLb'), pendingScore.id);
+    pendingScore = null;
+  }
+
+  // ---- Game state ----
+  let state = 'menu'; // menu | play | over
+  let flames = [];
+  let particles = [];
+  let floaters = []; // score popups
+  let mouse = { x: W/2, y: H/2 };
+  let ammo = 6, maxAmmo = 6, reloading = false, reloadT = 0;
+  let temp = 20;          // °C
+  let score = 0;
+  let wave = 1;
+  let extinguished = 0;
+  let spawnTimer = 0;
+  let spawnEvery = 90;     // frames
+  let flash = 0;           // muzzle/screen flash
+  let shake = 0;
+  let lastTime = 0;
+  let elapsed = 0;         // seconds survived
+  let diff = 1;            // difficulty factor, grows with time
+  let seq = 0;             // id generator for leaderboard entries
+
+  function startGame() {
+    state = 'play';
+    flames = []; particles = []; floaters = [];
+    ammo = maxAmmo; reloading = false; reloadT = 0;
+    temp = 20; score = 0; wave = 1; extinguished = 0;
+    spawnTimer = 0; spawnEvery = 90; flash = 0; shake = 0;
+    elapsed = 0; diff = 1;
+    startCard.classList.add('hidden');
+    overCard.classList.add('hidden');
+  }
+
+  function fmtTime(s) {
+    const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+    return m + ':' + String(ss).padStart(2, '0');
+  }
+
+  function gameOver() {
+    state = 'over';
+    // time-survival bonus rewards holding the line longer
+    score += Math.floor(elapsed) * 2;
+    overText.innerHTML =
+      `Датацентр расплавился при <b>${Math.round(temp)}°C</b>.<br>` +
+      `Продержался <span class="stat">${fmtTime(elapsed)}</span> · ` +
+      `Потушено: <span class="stat">${extinguished}</span> · ` +
+      `Волна: <span class="stat">${wave}</span><br>` +
+      `Итог: <span class="stat" style="font-size:20px">${score}</span> очков`;
+    pendingScore = { id: ++seq + '_' + Math.floor(elapsed), score, wave, time: Math.floor(elapsed) };
+    nameRow.classList.remove('hidden');
+    renderLB(document.getElementById('overLb'), null);
+    overCard.classList.remove('hidden');
+    nameInput.value = '';
+    nameInput.focus();
+  }
+
+  // ---- Input ----
+  const rect = () => canvas.getBoundingClientRect();
+  canvas.addEventListener('mousemove', e => {
+    const r = rect();
+    mouse.x = (e.clientX - r.left) * (W / r.width);
+    mouse.y = (e.clientY - r.top) * (H / r.height);
+  });
+  canvas.addEventListener('mousedown', e => { e.preventDefault(); shoot(); });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'r' || e.key === 'R') reload();
+  });
+  // touch support
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const r = rect(), t = e.touches[0];
+    mouse.x = (t.clientX - r.left) * (W / r.width);
+    mouse.y = (t.clientY - r.top) * (H / r.height);
+    shoot();
+  }, { passive: false });
+
+  function reload() {
+    if (reloading || ammo === maxAmmo || state !== 'play') return;
+    reloading = true; reloadT = 0;
+  }
+
+  function shoot() {
+    if (state !== 'play') return;
+    if (reloading) return;
+    if (ammo <= 0) { reload(); return; }
+    ammo--;
+    flash = 6;
+    shake = 5;
+    spawnBurst(mouse.x, mouse.y);
+
+    // hit detection — closest flame within splash radius
+    let hitR = 46;
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < flames.length; i++) {
+      const f = flames[i];
+      if (f.dead) continue;
+      const d = Math.hypot(f.x - mouse.x, f.y - mouse.y);
+      if (d < hitR + f.r && d < bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0) extinguish(flames[best]);
+    if (ammo <= 0) reload();
+  }
+
+  function extinguish(f) {
+    f.dead = true;
+    extinguished++;
+    const gain = 10 * f.value;
+    score += gain;
+    temp = Math.max(18, temp - 3 * f.value);   // cooling reward
+    floaters.push({ x: f.x, y: f.y, t: 0, text: '-' + (3*f.value) + '°C', c: '#37d67a' });
+    for (let i = 0; i < 22; i++) {
+      particles.push({
+        x: f.x, y: f.y,
+        vx: (Math.random()-.5)*5, vy: (Math.random()-.5)*5 - 1,
+        life: 30 + Math.random()*20, max: 50,
+        r: 2 + Math.random()*3, type: 'steam'
+      });
+    }
+  }
+
+  function spawnBurst(x, y) {
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 1 + Math.random() * 4;
+      particles.push({
+        x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp,
+        life: 12 + Math.random()*10, max: 22, r: 1.5 + Math.random()*2, type: 'water'
+      });
+    }
+  }
+
+  // ---- Flames (the "ducks") ----
+  // Rack column x-positions where fires erupt
+  const racks = [];
+  const rackCount = 6;
+  for (let i = 0; i < rackCount; i++) {
+    racks.push(90 + i * ((W - 180) / (rackCount - 1)));
+  }
+
+  function spawnFlame() {
+    const rx = racks[Math.floor(Math.random() * racks.length)];
+    const speed = 0.6 + diff * 0.22 + Math.random() * 0.6;
+    const value = Math.random() < 0.12 + diff * 0.03 ? 2 : 1; // hot embers worth more
+    flames.push({
+      x: rx + (Math.random()-.5)*30,
+      y: FLOOR - 10,
+      r: value === 2 ? 20 : 26,
+      vx: (Math.random()-.5) * (0.5 + diff*0.14),
+      vy: -speed,
+      phase: Math.random()*Math.PI*2,
+      wob: 0.6 + Math.random()*0.8,
+      value,
+      dead: false,
+      escaped: false,
+      t: 0,
+    });
+  }
+
+  function update(dt) {
+    if (state !== 'play') return;
+
+    // time-based difficulty: ramps continuously the longer you survive
+    elapsed += dt / 60;
+    diff = 1 + elapsed / 22;          // +1 difficulty level roughly every 22s
+    wave = Math.floor(elapsed / 22) + 1;
+
+    // ambient heat rises with time and with the number of live flames
+    const live = flames.filter(f => !f.dead && !f.escaped).length;
+    temp += (0.005 + 0.0016 * diff + live * 0.004) * dt;
+
+    // fires erupt faster over time; at high difficulty several at once
+    spawnEvery = Math.max(22, 90 - diff * 9);
+
+    spawnTimer += dt;
+    if (spawnTimer >= spawnEvery) {
+      spawnTimer = 0;
+      spawnFlame();
+      if (diff > 3.5 && Math.random() < (diff - 3.5) * 0.18) spawnFlame(); // bursts at high heat
+    }
+
+    // update flames
+    for (const f of flames) {
+      if (f.dead) continue;
+      f.t += dt;
+      f.phase += 0.08 * dt * f.wob;
+      f.x += (f.vx + Math.sin(f.phase) * 1.2) * dt;
+      f.y += f.vy * dt;
+      if (f.x < 40) { f.x = 40; f.vx = Math.abs(f.vx); }
+      if (f.x > W-40) { f.x = W-40; f.vx = -Math.abs(f.vx); }
+      if (f.y < -20 && !f.escaped) {
+        f.escaped = true; f.dead = true;
+        temp += 8;   // fire escaped — big heat penalty
+        floaters.push({ x: f.x, y: 30, t: 0, text: '+8°C', c: '#ff5a3c' });
+      }
+    }
+    flames = flames.filter(f => !f.dead || f.t < 0); // drop dead
+    flames = flames.filter(f => !f.dead);
+
+    // reload
+    if (reloading) {
+      reloadT += dt;
+      if (reloadT >= 55) { reloading = false; ammo = maxAmmo; }
+    }
+
+    // particles
+    for (const p of particles) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vy += (p.type === 'steam' ? -0.06 : 0.12) * dt;
+      p.vx *= 0.98;
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    for (const fl of floaters) { fl.t += dt; fl.y -= 0.6 * dt; }
+    floaters = floaters.filter(fl => fl.t < 60);
+
+    if (flash > 0) flash -= dt;
+    if (shake > 0) shake -= dt * 0.6;
+
+    if (temp >= 100) { temp = 100; gameOver(); }
+  }
+
+  // ---- Rendering ----
+  function drawBackground() {
+    // room gradient
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0e1c33');
+    g.addColorStop(1, '#071120');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // subtle grid floor
+    ctx.strokeStyle = 'rgba(79,140,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let y = FLOOR; y < H; y += 14) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // heat haze tint based on temperature
+    const heat = Math.min(1, (temp - 20) / 80);
+    if (heat > 0) {
+      ctx.fillStyle = `rgba(255,80,40,${heat * 0.16})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // server racks
+    for (const rx of racks) drawRack(rx, FLOOR);
+
+    // floor line
+    ctx.fillStyle = '#0a1424';
+    ctx.fillRect(0, FLOOR, W, H - FLOOR);
+    ctx.strokeStyle = 'rgba(79,140,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(0, FLOOR); ctx.lineTo(W, FLOOR); ctx.stroke();
+  }
+
+  function drawRack(cx, baseY) {
+    const w = 70, h = 220, x = cx - w/2, y = baseY - h;
+    ctx.fillStyle = '#0d1830';
+    ctx.strokeStyle = 'rgba(120,150,220,0.25)';
+    ctx.lineWidth = 2;
+    roundRect(x, y, w, h, 6); ctx.fill(); ctx.stroke();
+    // server units with blinking LEDs
+    for (let i = 0; i < 9; i++) {
+      const uy = y + 8 + i * ((h - 16) / 9);
+      ctx.fillStyle = '#101f3c';
+      ctx.fillRect(x + 6, uy, w - 12, (h-16)/9 - 4);
+      // led
+      const on = ((Math.floor(perf/12) + i + Math.floor(cx)) % 3) === 0;
+      ctx.fillStyle = on ? '#37d67a' : '#1c3358';
+      ctx.fillRect(x + 10, uy + 3, 5, 5);
+      ctx.fillStyle = ((i + Math.floor(cx/13)) % 4 === 0) ? '#4f8cff' : '#183053';
+      ctx.fillRect(x + 18, uy + 3, 5, 5);
+    }
+  }
+
+  function drawFlame(f) {
+    const flick = Math.sin(f.phase * 2) * 3;
+    const r = f.r + flick;
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    // glow
+    const grd = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 2.2);
+    grd.addColorStop(0, f.value === 2 ? 'rgba(255,230,120,.9)' : 'rgba(255,200,80,.85)');
+    grd.addColorStop(0.4, 'rgba(255,110,40,.55)');
+    grd.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(0, 0, r * 2.2, 0, Math.PI*2); ctx.fill();
+
+    // flame body (teardrop)
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 1.4);
+    ctx.bezierCurveTo(r*0.9, -r*0.6, r*0.75, r*0.7, 0, r*0.9);
+    ctx.bezierCurveTo(-r*0.75, r*0.7, -r*0.9, -r*0.6, 0, -r*1.4);
+    ctx.fillStyle = f.value === 2 ? '#ff7a2c' : '#ff5a2c';
+    ctx.fill();
+    // inner
+    ctx.beginPath();
+    ctx.moveTo(0, -r*0.8);
+    ctx.bezierCurveTo(r*0.5, -r*0.3, r*0.4, r*0.4, 0, r*0.55);
+    ctx.bezierCurveTo(-r*0.4, r*0.4, -r*0.5, -r*0.3, 0, -r*0.8);
+    ctx.fillStyle = '#ffd23c';
+    ctx.fill();
+    // eyes for character
+    ctx.fillStyle = '#3a0d00';
+    ctx.beginPath(); ctx.arc(-r*0.22, -r*0.15, r*0.1, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(r*0.22, -r*0.15, r*0.1, 0, Math.PI*2); ctx.fill();
+    if (f.value === 2) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('×2', 0, r*1.5);
+    }
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const a = p.life / p.max;
+      if (p.type === 'steam') {
+        ctx.fillStyle = `rgba(220,235,255,${a*0.5})`;
+      } else {
+        ctx.fillStyle = `rgba(120,200,255,${a})`;
+      }
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawFloaters() {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 16px sans-serif';
+    for (const fl of floaters) {
+      const a = 1 - fl.t / 60;
+      ctx.fillStyle = fl.c.replace(')', `,${a})`).replace('rgb', 'rgba');
+      ctx.globalAlpha = a;
+      ctx.fillStyle = fl.c;
+      ctx.fillText(fl.text, fl.x, fl.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawHUD() {
+    // top bar
+    ctx.fillStyle = 'rgba(8,14,30,0.7)';
+    ctx.fillRect(0, 0, W, 54);
+
+    // temperature gauge
+    const gx = 20, gy = 18, gw = 260, gh = 18;
+    ctx.fillStyle = '#0a1424';
+    roundRect(gx, gy, gw, gh, 9); ctx.fill();
+    const p = (temp - 18) / (100 - 18);
+    const tg = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+    tg.addColorStop(0, '#37d67a');
+    tg.addColorStop(0.6, '#ffd23c');
+    tg.addColorStop(1, '#ff3c2c');
+    ctx.fillStyle = tg;
+    roundRect(gx, gy, Math.max(6, gw * Math.min(1,p)), gh, 9); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('🌡 ' + Math.round(temp) + '°C', gx + 8, gy + 14);
+
+    // time / score / wave
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillStyle = '#e8eefc';
+    ctx.fillText('⏱ ' + fmtTime(elapsed) + '   Очки: ' + score + '   Волна: ' + wave, W - 20, 34);
+
+    // ammo (extinguisher charges)
+    const ax = W/2 - (maxAmmo * 18)/2;
+    for (let i = 0; i < maxAmmo; i++) {
+      ctx.fillStyle = i < ammo ? '#4f8cff' : 'rgba(255,255,255,0.15)';
+      roundRect(ax + i*18, 20, 12, 16, 3); ctx.fill();
+    }
+    if (reloading) {
+      ctx.fillStyle = '#ffd23c';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('перезарядка…', W/2, 50);
+    } else if (ammo === 0) {
+      ctx.fillStyle = '#ff5a3c';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('нажми R', W/2, 50);
+    }
+  }
+
+  function drawCrosshair() {
+    if (state !== 'play') return;
+    const x = mouse.x, y = mouse.y, r = 18;
+    ctx.strokeStyle = reloading ? 'rgba(255,210,60,0.9)' : 'rgba(120,200,255,0.95)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - r - 6, y); ctx.lineTo(x - r + 4, y);
+    ctx.moveTo(x + r - 4, y); ctx.lineTo(x + r + 6, y);
+    ctx.moveTo(x, y - r - 6); ctx.lineTo(x, y - r + 4);
+    ctx.moveTo(x, y + r - 4); ctx.lineTo(x, y + r + 6);
+    ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI*2); ctx.fill();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  let perf = 0;
+  function loop(ts) {
+    const dt = lastTime ? Math.min(3, (ts - lastTime) / 16.67) : 1;
+    lastTime = ts;
+    perf++;
+
+    update(dt);
+
+    ctx.save();
+    if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+    drawBackground();
+    for (const f of flames) if (!f.dead) drawFlame(f);
+    drawParticles();
+    drawFloaters();
+    ctx.restore();
+
+    if (flash > 0) {
+      ctx.fillStyle = `rgba(255,255,255,${flash/20})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (state === 'play') { drawHUD(); drawCrosshair(); }
+
+    requestAnimationFrame(loop);
+  }
+  renderLB(document.getElementById('startLb'), null);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

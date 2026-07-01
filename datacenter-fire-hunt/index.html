@@ -109,9 +109,9 @@
          Наведи прицел и <b>туши огонь</b>, пока датацентр не расплавился.</p>
       <p>Каждый упущенный огонёк поднимает <b>температуру</b>.
          Достигнет 100°C — <b>тепловая авария</b> и конец игры.</p>
-      <p style="font-size:13px;opacity:.8">Сложность растёт со временем: огня всё больше, он всё быстрее.</p>
+      <p style="font-size:13px;opacity:.8">Лови бонусы: ❄️ охлаждение · 💧 пена ×2 · ⚡ безлимитный залп · 🧊 заморозка. Сложность и 8-бит тревога нарастают со временем.</p>
       <button id="startBtn">Заступить на смену</button>
-      <div class="keys">Мышь — прицел · Клик — залп огнетушителя · R — перезарядка</div>
+      <div class="keys">Мышь — прицел · Клик — залп · R — перезарядка · P — пауза · M — звук</div>
       <div class="lb" id="startLb"></div>
     </div>
     <div id="overCard" class="card hidden">
@@ -180,8 +180,93 @@
     pendingScore = null;
   }
 
+  // ---- 8-bit audio (Web Audio, fully generated — no external assets) ----
+  let actx = null, masterGain = null, muted = false, audioTimer = null;
+  let nextNoteTime = 0, step16 = 0;
+  const NOTE = { A2:110, F2:87.31, G2:98, C3:130.81, E3:164.81, A3:220, C4:261.63,
+                 E4:329.63, G4:392, A4:440, Bb4:466.16, C5:523.25, E5:659.25 };
+  // tense minor arpeggio; the Bb over an A-minor bed gives an "alarm" bite
+  const LEAD = ['A4','E4','A4','C5','A4','E4','Bb4','C5','A4','E4','A4','C5','E5','C5','Bb4','A4'];
+  const BASS = ['A2','A2','A2','A2','F2','F2','F2','F2','G2','G2','G2','G2','A2','A2','E3','E3'];
+
+  function initAudio() {
+    if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = actx.createGain();
+      masterGain.gain.value = muted ? 0 : 0.9;
+      masterGain.connect(actx.destination);
+      nextNoteTime = actx.currentTime;
+      audioTimer = setInterval(scheduler, 25);
+    } catch (e) { actx = null; }
+  }
+  function tone(freq, start, dur, type, vol) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, start);
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(vol, start + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    o.connect(g); g.connect(masterGain);
+    o.start(start); o.stop(start + dur + 0.02);
+  }
+  function scheduler() {
+    if (!actx) return;
+    const bpm = 104 + Math.min(96, (diff - 1) * 13);   // music tightens as it heats up
+    const stepDur = (60 / bpm) / 4;
+    while (nextNoteTime < actx.currentTime + 0.13) {
+      if (state === 'play') {
+        const s = step16;
+        tone(NOTE[BASS[s]], nextNoteTime, stepDur * 1.6, 'triangle', 0.16);          // bassline
+        if (s % 2 === 0) tone(NOTE[LEAD[s]], nextNoteTime, stepDur * 0.9, 'square', 0.07); // arpeggio
+        if (s % 4 === 0) tone(55, nextNoteTime, 0.09, 'square', 0.22);               // kick pulse
+        if (temp > 75 && s % 8 === 0) tone(880, nextNoteTime, 0.12, 'sawtooth', 0.12); // critical-heat siren
+      }
+      nextNoteTime += stepDur;
+      step16 = (step16 + 1) % 16;
+    }
+  }
+  function sfx(type) {
+    if (!actx) return;
+    const t = actx.currentTime;
+    if (type === 'shoot')       { tone(320, t, 0.08, 'square', 0.18); tone(120, t, 0.10, 'square', 0.14); }
+    else if (type === 'ext')    { tone(660, t, 0.08, 'square', 0.15); tone(990, t + 0.05, 0.08, 'square', 0.12); }
+    else if (type === 'power')  { tone(523, t, 0.09, 'square', 0.20); tone(784, t + 0.08, 0.09, 'square', 0.20); tone(1047, t + 0.16, 0.12, 'square', 0.20); }
+    else if (type === 'escape') { tone(200, t, 0.18, 'sawtooth', 0.20); tone(150, t + 0.09, 0.20, 'sawtooth', 0.20); }
+  }
+  function toggleMute() {
+    muted = !muted;
+    if (masterGain) masterGain.gain.value = muted ? 0 : 0.9;
+  }
+
+  // ---- Power-ups (temporary buffs) ----
+  const PU = {
+    coolant: { icon: '❄️', color: '#5ad1ff' },
+    foam:    { icon: '💧', color: '#4f8cff' },
+    nitro:   { icon: '⚡', color: '#ffd23c' },
+    slow:    { icon: '🧊', color: '#b9e6ff' },
+  };
+  const PU_TYPES = Object.keys(PU);
+  function spawnPowerup() {
+    const type = PU_TYPES[Math.floor(Math.random() * PU_TYPES.length)];
+    powerups.push({ x: 70 + Math.random() * (W - 140), y: FLOOR - 10,
+      vx: (Math.random() - .5) * 0.7, vy: -(0.85 + Math.random() * 0.35),
+      phase: Math.random() * 6.28, type, r: 19, dead: false, t: 0 });
+  }
+  function activatePowerup(q) {
+    q.dead = true; score += 25; sfx('power');
+    const c = PU[q.type].color;
+    if (q.type === 'coolant')   { temp = Math.max(18, temp - 18); buffs.cold = 5;
+      floaters.push({ x: q.x, y: q.y, t: 0, text: '❄️ -18°C', c }); }
+    else if (q.type === 'foam') { buffs.foam = 8;
+      floaters.push({ x: q.x, y: q.y, t: 0, text: '💧 залп ×2', c }); }
+    else if (q.type === 'nitro'){ buffs.nitro = 6; ammo = maxAmmo; reloading = false;
+      floaters.push({ x: q.x, y: q.y, t: 0, text: '⚡ безлимит', c }); }
+    else if (q.type === 'slow') { buffs.slow = 5;
+      floaters.push({ x: q.x, y: q.y, t: 0, text: '🧊 заморозка', c }); }
+  }
+
   // ---- Game state ----
-  let state = 'menu'; // menu | play | over
+  let state = 'menu'; // menu | play | paused | over
   let flames = [];
   let particles = [];
   let floaters = []; // score popups
@@ -199,16 +284,26 @@
   let elapsed = 0;         // seconds survived
   let diff = 1;            // difficulty factor, grows with time
   let seq = 0;             // id generator for leaderboard entries
+  let powerups = [];       // floating buff pickups
+  let buffs = { cold: 0, foam: 0, nitro: 0, slow: 0 };  // active buff timers (seconds)
+  let puCooldown = 7;      // seconds until next power-up spawns
 
   function startGame() {
     state = 'play';
-    flames = []; particles = []; floaters = [];
+    flames = []; particles = []; floaters = []; powerups = [];
+    buffs = { cold: 0, foam: 0, nitro: 0, slow: 0 };
     ammo = maxAmmo; reloading = false; reloadT = 0;
     temp = 20; score = 0; wave = 1; extinguished = 0;
     spawnTimer = 0; spawnEvery = 90; flash = 0; shake = 0;
-    elapsed = 0; diff = 1;
+    elapsed = 0; diff = 1; puCooldown = 7;
     startCard.classList.add('hidden');
     overCard.classList.add('hidden');
+    initAudio();   // user gesture (button click) unlocks Web Audio
+  }
+
+  function togglePause() {
+    if (state === 'play') { state = 'paused'; if (actx) actx.suspend(); }
+    else if (state === 'paused') { state = 'play'; lastTime = 0; if (actx) actx.resume(); }
   }
 
   function fmtTime(s) {
@@ -244,6 +339,8 @@
   canvas.addEventListener('mousedown', e => { e.preventDefault(); shoot(); });
   window.addEventListener('keydown', e => {
     if (e.key === 'r' || e.key === 'R') reload();
+    else if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') togglePause();
+    else if (e.key === 'm' || e.key === 'M') toggleMute();
   });
   // touch support
   canvas.addEventListener('touchstart', e => {
@@ -261,15 +358,28 @@
 
   function shoot() {
     if (state !== 'play') return;
-    if (reloading) return;
-    if (ammo <= 0) { reload(); return; }
-    ammo--;
+    const unlimited = buffs.nitro > 0;
+    if (reloading && !unlimited) return;
+    if (ammo <= 0 && !unlimited) { reload(); return; }
+    if (!unlimited) ammo--;
     flash = 6;
     shake = 5;
+    sfx('shoot');
     spawnBurst(mouse.x, mouse.y);
 
-    // hit detection — closest flame within splash radius
-    let hitR = 46;
+    const hitR = buffs.foam > 0 ? 82 : 46;   // foam power-up widens the splash
+
+    // power-ups take pickup priority
+    let pb = -1, pd = Infinity;
+    for (let i = 0; i < powerups.length; i++) {
+      const q = powerups[i];
+      if (q.dead) continue;
+      const d = Math.hypot(q.x - mouse.x, q.y - mouse.y);
+      if (d < hitR + q.r && d < pd) { pd = d; pb = i; }
+    }
+    if (pb >= 0) activatePowerup(powerups[pb]);
+
+    // closest flame within splash radius
     let best = -1, bestD = Infinity;
     for (let i = 0; i < flames.length; i++) {
       const f = flames[i];
@@ -278,12 +388,13 @@
       if (d < hitR + f.r && d < bestD) { bestD = d; best = i; }
     }
     if (best >= 0) extinguish(flames[best]);
-    if (ammo <= 0) reload();
+    if (ammo <= 0 && !unlimited) reload();
   }
 
   function extinguish(f) {
     f.dead = true;
     extinguished++;
+    sfx('ext');
     const gain = 10 * f.value;
     score += gain;
     temp = Math.max(18, temp - 3 * f.value);   // cooling reward
@@ -341,40 +452,60 @@
 
     // time-based difficulty: ramps continuously the longer you survive
     elapsed += dt / 60;
-    diff = 1 + elapsed / 22;          // +1 difficulty level roughly every 22s
-    wave = Math.floor(elapsed / 22) + 1;
+    diff = 1 + elapsed / 16;           // harder: ~+1 difficulty level every 16s
+    wave = Math.floor(elapsed / 16) + 1;
 
-    // ambient heat rises with time and with the number of live flames
+    // tick down active buff timers
+    for (const k in buffs) if (buffs[k] > 0) buffs[k] = Math.max(0, buffs[k] - dt / 60);
+
+    // ambient heat rises with time and live flames — frozen while coolant is active
     const live = flames.filter(f => !f.dead && !f.escaped).length;
-    temp += (0.005 + 0.0016 * diff + live * 0.004) * dt;
+    if (buffs.cold <= 0)
+      temp += (0.007 + 0.0024 * diff + live * 0.005) * dt;
 
     // fires erupt faster over time; at high difficulty several at once
-    spawnEvery = Math.max(22, 90 - diff * 9);
+    spawnEvery = Math.max(16, 84 - diff * 10);
 
     spawnTimer += dt;
     if (spawnTimer >= spawnEvery) {
       spawnTimer = 0;
       spawnFlame();
-      if (diff > 3.5 && Math.random() < (diff - 3.5) * 0.18) spawnFlame(); // bursts at high heat
+      if (diff > 3 && Math.random() < (diff - 3) * 0.22) spawnFlame();  // double at high heat
+      if (diff > 6 && Math.random() < (diff - 6) * 0.15) spawnFlame();  // triple at extreme heat
     }
 
-    // update flames
+    // power-ups drift up occasionally
+    puCooldown -= dt / 60;
+    if (puCooldown <= 0) { spawnPowerup(); puCooldown = 9 + Math.random() * 7; }
+
+    // update flames (slowed while the freeze buff is active)
+    const slowK = buffs.slow > 0 ? 0.42 : 1;
     for (const f of flames) {
       if (f.dead) continue;
       f.t += dt;
-      f.phase += 0.08 * dt * f.wob;
-      f.x += (f.vx + Math.sin(f.phase) * 1.2) * dt;
-      f.y += f.vy * dt;
+      f.phase += 0.08 * dt * f.wob * slowK;
+      f.x += (f.vx + Math.sin(f.phase) * 1.2) * dt * slowK;
+      f.y += f.vy * dt * slowK;
       if (f.x < 40) { f.x = 40; f.vx = Math.abs(f.vx); }
       if (f.x > W-40) { f.x = W-40; f.vx = -Math.abs(f.vx); }
       if (f.y < -20 && !f.escaped) {
         f.escaped = true; f.dead = true;
-        temp += 8;   // fire escaped — big heat penalty
-        floaters.push({ x: f.x, y: 30, t: 0, text: '+8°C', c: '#ff5a3c' });
+        temp += 9;   // fire escaped — big heat penalty
+        sfx('escape');
+        floaters.push({ x: f.x, y: 30, t: 0, text: '+9°C', c: '#ff5a3c' });
       }
     }
-    flames = flames.filter(f => !f.dead || f.t < 0); // drop dead
     flames = flames.filter(f => !f.dead);
+
+    // update power-ups (float up, bob, drift away if uncaught — no penalty)
+    for (const q of powerups) {
+      if (q.dead) continue;
+      q.t += dt; q.phase += 0.06 * dt;
+      q.x += q.vx * dt; q.y += q.vy * dt;
+      if (q.x < 40 || q.x > W - 40) q.vx *= -1;
+      if (q.y < -24) q.dead = true;
+    }
+    powerups = powerups.filter(q => !q.dead);
 
     // reload
     if (reloading) {
@@ -493,6 +624,28 @@
     ctx.restore();
   }
 
+  function drawPowerup(q) {
+    const cfg = PU[q.type];
+    const bob = Math.sin(q.phase) * 3;
+    ctx.save();
+    ctx.translate(q.x, q.y + bob);
+    // pulsing glow
+    const g = ctx.createRadialGradient(0, 0, 2, 0, 0, q.r * 2.4);
+    g.addColorStop(0, cfg.color); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.45 + Math.sin(q.phase * 2) * 0.12;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, q.r * 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    // disc
+    ctx.fillStyle = 'rgba(10,20,36,0.92)';
+    ctx.strokeStyle = cfg.color; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, q.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(cfg.icon, 0, 1);
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
   function drawParticles() {
     for (const p of particles) {
       const a = p.life / p.max;
@@ -562,6 +715,47 @@
       ctx.textAlign = 'center';
       ctx.fillText('нажми R', W/2, 50);
     }
+
+    drawBuffs();
+
+    // sound / pause hint
+    ctx.textAlign = 'left';
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText((muted ? '🔇' : '🔊') + ' M   ⏸ P', 18, H - 16);
+  }
+
+  function drawBuffs() {
+    const active = [];
+    if (buffs.cold  > 0) active.push(['❄️', '#5ad1ff', buffs.cold, 5]);
+    if (buffs.foam  > 0) active.push(['💧', '#4f8cff', buffs.foam, 8]);
+    if (buffs.nitro > 0) active.push(['⚡', '#ffd23c', buffs.nitro, 6]);
+    if (buffs.slow  > 0) active.push(['🧊', '#b9e6ff', buffs.slow, 5]);
+    if (!active.length) return;
+    const pw = 46, gap = 6, total = active.length * (pw + gap) - gap;
+    let x = W/2 - total/2;
+    const y = 60;
+    for (const [icon, color, rem, max] of active) {
+      ctx.fillStyle = 'rgba(10,20,36,0.85)';
+      roundRect(x, y, pw, 15, 7); ctx.fill();
+      ctx.fillStyle = color;
+      roundRect(x, y, pw * (rem / max), 15, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(icon + Math.ceil(rem), x + 5, y + 12);
+      x += pw + gap;
+    }
+  }
+
+  function drawPauseOverlay() {
+    ctx.fillStyle = 'rgba(6,10,22,0.74)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#e8eefc';
+    ctx.font = 'bold 46px sans-serif';
+    ctx.fillText('⏸ ПАУЗА', W/2, H/2 - 8);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(232,238,252,0.7)';
+    ctx.fillText('P или Esc — продолжить · M — звук', W/2, H/2 + 28);
   }
 
   function drawCrosshair() {
@@ -602,6 +796,7 @@
     if (shake > 0) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
     drawBackground();
     for (const f of flames) if (!f.dead) drawFlame(f);
+    for (const q of powerups) if (!q.dead) drawPowerup(q);
     drawParticles();
     drawFloaters();
     ctx.restore();
@@ -611,7 +806,9 @@
       ctx.fillRect(0, 0, W, H);
     }
 
-    if (state === 'play') { drawHUD(); drawCrosshair(); }
+    if (state === 'play' || state === 'paused') drawHUD();
+    if (state === 'play') drawCrosshair();
+    if (state === 'paused') drawPauseOverlay();
 
     requestAnimationFrame(loop);
   }
